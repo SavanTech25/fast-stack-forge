@@ -1,7 +1,7 @@
 .PHONY: install install-reqs build clean format test
 
 install:
-	uv venv && uv pip install -e .
+	uv sync
 
 install-reqs:
 	uv pip install -r requirements.txt
@@ -14,7 +14,7 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
 
 format:
-	uvx ruff format fast-stack-forge/
+	uvx ruff format fast_stack_forge/ tests/
 
 test:
 	uv run pytest

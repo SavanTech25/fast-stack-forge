@@ -1,0 +1,8 @@
+snapshots:
+  - name: [[ m.customers ]]_snapshot
+    description: Keeps the history of customer changes (SCD type 2).
+    relation: ref('[[ m.customers ]]')
+    config:
+      unique_key: customer_id
+      strategy: check
+      check_cols: all

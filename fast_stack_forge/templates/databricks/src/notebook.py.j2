@@ -1,0 +1,17 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Ingest
+# MAGIC Copies the NYC taxi sample into `<catalog>.<schema>.raw_trips`. Replace the source with your own data.
+
+# COMMAND ----------
+
+dbutils.widgets.text("catalog", "{{ catalog }}")  # noqa: F821
+dbutils.widgets.text("schema", "{{ name }}")  # noqa: F821
+catalog = dbutils.widgets.get("catalog")  # noqa: F821
+schema = dbutils.widgets.get("schema")  # noqa: F821
+
+# COMMAND ----------
+
+trips = spark.read.table("samples.nyctaxi.trips")  # noqa: F821
+trips.write.mode("overwrite").saveAsTable(f"{catalog}.{schema}.raw_trips")
+display(trips.limit(10))  # noqa: F821

@@ -1,20 +1,36 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "fast-stack-forge"
-version = "1.0.3"
-description = "CLI toolkit - Create FastAPI, dbt, AI services and more applications quickly"
+version = "1.1.0"
+description = "CLI toolkit - scaffold FastAPI, dbt, Databricks, AI services and data science projects by answering a few questions"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+keywords = ["scaffolding", "cli", "fastapi", "dbt", "databricks", "data-engineering", "uv"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Software Development :: Code Generators",
+]
 dependencies = [
     "click>=8.1.0",
     "jinja2>=3.1.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/SavanTech25/fast-stack-forge"
+
 [project.scripts]
 fast-stack-forge = "fast_stack_forge.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pyyaml>=6.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -22,3 +38,6 @@ include = ["fast_stack_forge*"]
 
 [tool.setuptools.package-data]
 fast_stack_forge = ["templates/**/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

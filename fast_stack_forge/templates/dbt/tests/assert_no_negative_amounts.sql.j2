@@ -1,0 +1,4 @@
+-- Singular test: returns the failing rows (orders with a negative amount)
+select *
+from {{ ref('[[ m.orders ]]') }}
+where amount < 0

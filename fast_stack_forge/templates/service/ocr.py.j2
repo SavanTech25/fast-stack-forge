@@ -1,111 +1,109 @@
-from decouple import config
+"""{{ service_name }} — text extraction from images and PDFs ({{ provider }})."""
+
+{% if provider != 'gemini' %}
 import base64
-import json
-{% if provider in ['openai', 'azure'] %}
-from openai import AsyncOpenAI{% if provider == 'azure' %}, AsyncAzureOpenAI{% endif %}
+
+{% endif %}
+from decouple import config
+{% if provider == 'openai' %}
+from openai import AsyncOpenAI
+{% elif provider == 'azure' %}
+from openai import AsyncAzureOpenAI
 {% elif provider == 'anthropic' %}
 from anthropic import AsyncAnthropic
 {% elif provider == 'mistral' %}
-from mistralai.async_client import MistralAsyncClient
+from mistralai.client import Mistral
 {% elif provider == 'gemini' %}
 from google import genai
+from google.genai import types
 {% endif %}
+
+SUPPORTED_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
+
+PROMPT = (
+    "Extract all the text from this document. Keep the reading order, "
+    "render tables as Markdown tables and return only the extracted text, as Markdown."
+)
+
 
 class {{ service_name }}Service:
     def __init__(self):
-        {% if provider == 'openai' %}
+{% if provider == 'openai' %}
         self.client = AsyncOpenAI(api_key=config("OPENAI_API_KEY"))
-        self.model = "gpt-4o"
-        {% elif provider == 'azure' %}
+        self.model = config("OPENAI_MODEL", default="gpt-5.5")
+{% elif provider == 'azure' %}
         self.client = AsyncAzureOpenAI(
             api_key=config("AZURE_OPENAI_API_KEY"),
-            api_version="2024-02-15-preview",
-            azure_endpoint=config("AZURE_OPENAI_ENDPOINT")
+            azure_endpoint=config("AZURE_OPENAI_ENDPOINT"),
+            api_version=config("AZURE_OPENAI_API_VERSION", default="2024-10-21"),
         )
-        self.model = config("AZURE_OPENAI_VISION_DEPLOYMENT", default="gpt-4o")
-        {% elif provider == 'anthropic' %}
+        self.model = config("AZURE_OPENAI_CHAT_DEPLOYMENT")  # a vision-capable deployment
+{% elif provider == 'anthropic' %}
         self.client = AsyncAnthropic(api_key=config("ANTHROPIC_API_KEY"))
-        self.model = "claude-3-5-sonnet-20240620"
-        {% elif provider == 'mistral' %}
-        self.client = MistralAsyncClient(api_key=config("MISTRAL_API_KEY"))
-        self.model = "pixtral-12b-2409"
-        {% elif provider == 'gemini' %}
+        self.model = config("ANTHROPIC_MODEL", default="claude-opus-5-5")
+{% elif provider == 'mistral' %}
+        self.client = Mistral(api_key=config("MISTRAL_API_KEY"))
+        self.model = config("MISTRAL_OCR_MODEL", default="mistral-ocr-latest")
+{% elif provider == 'gemini' %}
         self.client = genai.Client(api_key=config("GEMINI_API_KEY"))
-        self.model = "gemini-1.5-pro"
-        {% endif %}
+        self.model = config("GEMINI_MODEL", default="gemini-flash-latest")
+{% endif %}
 
-    def _encode_image(self, file_path: str) -> str:
-        with open(file_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
+    async def extract_text(self, data: bytes, mime_type: str, filename: str = "document") -> dict:
+        """Return {"text": markdown, "pages": int | None, "model": str}."""
+        if mime_type not in SUPPORTED_TYPES:
+            raise ValueError(f"Unsupported file type {mime_type!r}. Supported: {', '.join(sorted(SUPPORTED_TYPES))}")
+{% if provider != 'gemini' %}
+        b64 = base64.standard_b64encode(data).decode()
+{% endif %}
+{% if provider in ['openai', 'azure'] %}
 
-    async def extract_text(self, file_path_or_url: str) -> dict:
-        """
-        Extract structured text from an image or document using Vision capabilities.
-        """
-        prompt = "Extract all the text from this image and return it as structured JSON."
-        
-        is_url = file_path_or_url.startswith("http")
-        base64_image = None if not is_url else None
-        if not is_url:
-            base64_image = self._encode_image(file_path_or_url)
-        
-        {% if provider in ['openai', 'azure'] %}
-        image_url = file_path_or_url if is_url else f"data:image/jpeg;base64,{base64_image}"
+        if mime_type == "application/pdf":
+            part = {"type": "file", "file": {"filename": filename, "file_data": f"data:{mime_type};base64,{b64}"}}
+        else:
+            part = {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}}
         response = await self.client.chat.completions.create(
             model=self.model,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_url}}
-                    ]
-                }
-            ]
+            messages=[{"role": "user", "content": [part, {"type": "text", "text": PROMPT}]}],
         )
-        return json.loads(response.choices[0].message.content)
-        {% elif provider == 'anthropic' %}
-        content = [{"type": "text", "text": prompt}]
-        if not is_url:
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": base64_image
-                }
-            })
+        return {"text": response.choices[0].message.content or "", "pages": None, "model": response.model}
+{% elif provider == 'anthropic' %}
+
+        block_type = "document" if mime_type == "application/pdf" else "image"
+        response = await self.client.beta.messages.create(
+            model=self.model,
+            max_tokens=16000,
+            # If the model declines, the API re-runs the request on Anthropic's recommended fallback model
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": block_type, "source": {"type": "base64", "media_type": mime_type, "data": b64}},
+                    {"type": "text", "text": PROMPT},
+                ],
+            }],
+        )
+        if response.stop_reason == "refusal":
+            raise RuntimeError("The model declined to process this document.")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        return {"text": text, "pages": None, "model": response.model}
+{% elif provider == 'mistral' %}
+
+        # Mistral OCR is a dedicated OCR endpoint (no prompt): it returns one Markdown string per page
+        data_url = f"data:{mime_type};base64,{b64}"
+        if mime_type == "application/pdf":
+            document = {"type": "document_url", "document_url": data_url, "document_name": filename}
         else:
-            # Note: Anthropic Python SDK natively requires base64 images
-            raise ValueError("Anthropic requires base64 images, URLs are not directly supported without downloading.")
-            
-        response = await self.client.messages.create(
+            document = {"type": "image_url", "image_url": data_url}
+        response = await self.client.ocr.process_async(model=self.model, document=document)
+        text = "\n\n".join(page.markdown for page in response.pages)
+        return {"text": text, "pages": len(response.pages), "model": response.model}
+{% elif provider == 'gemini' %}
+
+        response = await self.client.aio.models.generate_content(
             model=self.model,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": content}]
+            contents=[types.Part.from_bytes(data=data, mime_type=mime_type), PROMPT],
         )
-        return {"text": response.content[0].text}
-        {% elif provider == 'mistral' %}
-        image_url = file_path_or_url if is_url else f"data:image/jpeg;base64,{base64_image}"
-        response = await self.client.chat(
-            model=self.model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": image_url}
-                    ]
-                }
-            ]
-        )
-        return {"text": response.choices[0].message.content}
-        {% elif provider == 'gemini' %}
-        # Minimal gemini vision snippet
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=[prompt, file_path_or_url if is_url else file_path_or_url]
-        )
-        return {"text": response.text}
-        {% endif %}
+        return {"text": response.text or "", "pages": None, "model": self.model}
+{% endif %}

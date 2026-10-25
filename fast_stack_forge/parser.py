@@ -43,7 +43,11 @@ class FieldDef:
 
     @property
     def fk_table(self):
-        return self.foreign_key.lower() + "s" if self.foreign_key else None
+        if not self.foreign_key:
+            return None
+        # same pluralisation as make:entity's table names
+        name = self.foreign_key.lower()
+        return name if name.endswith("s") else name + "s"
 
     @property
     def fk_column(self):

@@ -2,23 +2,12 @@
 
 import click
 from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
-
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "ds_data"
-
-
-def render_ds(template_name: str, context: dict) -> str:
-    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), keep_trailing_newline=True)
-    return env.get_template(template_name).render(**context)
+from fast_stack_forge.commands.init_ds_data import render_ds
+from fast_stack_forge.utils import find_package, write as _write
 
 
 def write(path: Path, content: str, overwrite: bool = False) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and not overwrite:
-        click.echo(f"  {'skipped':>10}  {path} (already exists)")
-        return
-    path.write_text(content)
-    click.echo(f"  {'created':>10}  {path}")
+    _write(path, content, overwrite=overwrite)
 
 
 def init_ds_make(project_dir: str = ".") -> None:
@@ -30,12 +19,11 @@ def init_ds_make(project_dir: str = ".") -> None:
         click.echo(click.style("✗ No 'src/' directory found. Run this command from a DS project root.", fg="red"))
         raise SystemExit(1)
 
-    candidates = [p for p in src_dir.iterdir() if p.is_dir() and not p.name.startswith("_")]
-    if not candidates:
-        click.echo(click.style("✗ No package found inside 'src/'. Run 'fastforge init:ds-data' first.", fg="red"))
+    pkg_name = find_package(src_dir)
+    if not pkg_name:
+        click.echo(click.style("✗ No package found inside 'src/'. Run 'fast-stack-forge init:ds-data' first.", fg="red"))
         raise SystemExit(1)
 
-    pkg_name = candidates[0].name
     click.echo(click.style(f"\n⚡ FastForge ✕ AstroData — adding FastAPI + Streamlit to '{pkg_name}'\n", fg="cyan", bold=True))
 
     description = f"API for {pkg_name} package"

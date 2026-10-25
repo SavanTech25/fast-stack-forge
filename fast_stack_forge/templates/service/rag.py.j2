@@ -1,123 +1,134 @@
-import os
+{% import "_providers.j2" as p %}
+"""{{ service_name }} — retrieval-augmented generation over a {{ vector_store }} vector store ({{ provider }})."""
+
+import asyncio
+import uuid
+
 from decouple import config
-{% if provider in ['openai', 'azure'] %}
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-{% elif provider == 'anthropic' %}
-from langchain_anthropic import ChatAnthropic
-# Note: Anthropic doesn't have an official embedding model natively in Langchain, mock fallback:
-from langchain_community.embeddings import FakeEmbeddings as Embeddings
-{% elif provider == 'mistral' %}
-from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
-{% elif provider == 'gemini' %}
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-{% endif %}
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
-from sqlalchemy import text
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+{{ p.imports(provider, embeddings=True) }}
+COLLECTION = config("{{ service_name_upper }}_COLLECTION", default="{{ service_name_lower }}")
+TOP_K = config("{{ service_name_upper }}_TOP_K", default=4, cast=int)
+
+PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question using only the context below. "
+     "If the context does not contain the answer, say you don't know.\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
 
 class {{ service_name }}Service:
     def __init__(self):
-        {% if provider == 'openai' %}
-        self.llm = ChatOpenAI(model="gpt-4o", temperature=0)
-        self.embeddings = OpenAIEmbeddings()
-        {% elif provider == 'azure' %}
-        self.llm = ChatOpenAI(model="gpt-4o", temperature=0, azure_deployment="gpt-4o", api_version="2024-02-15-preview")
-        self.embeddings = OpenAIEmbeddings(azure_deployment="text-embedding-3-small", api_version="2024-02-15-preview")
-        {% elif provider == 'anthropic' %}
-        self.llm = ChatAnthropic(model="claude-3-5-sonnet-20240620", temperature=0)
-        self.embeddings = Embeddings(size=1536) # Replace with your embedding provider
-        {% elif provider == 'mistral' %}
-        self.llm = ChatMistralAI(model="mistral-large-latest", temperature=0)
-        self.embeddings = MistralAIEmbeddings()
-        {% elif provider == 'gemini' %}
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        {% endif %}
-        
-        # =====================================================================
-        # VECTOR STORE SETUP
-        # =====================================================================
-        {% if vector_store == 'chroma' %}
+        self.llm = {{ p.chat_model(provider) }}
+        self.embeddings = {{ p.embeddings(provider) }}
+        self.splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+        self.chain = PROMPT | self.llm | StrOutputParser()
+        self._store = None
+        self._store_lock = asyncio.Lock()
+
+    def _build_vector_store(self):
+        """Connect to the vector store. Runs once, on first use (not at import or app start)."""
+{% if vector_store == 'chroma' %}
         from langchain_chroma import Chroma
-        self.vector_store = Chroma(
-            collection_name="rag_collection",
+
+        return Chroma(
+            collection_name=COLLECTION,
             embedding_function=self.embeddings,
-            persist_directory="./chroma_data"
+            persist_directory=config("CHROMA_PERSIST_DIR", default="./chroma_data"),
         )
-        {% elif vector_store == 'qdrant' %}
+{% elif vector_store == 'qdrant' %}
         from langchain_qdrant import QdrantVectorStore
         from qdrant_client import QdrantClient
-        client = QdrantClient(url=config("QDRANT_URL"), api_key=config("QDRANT_API_KEY"))
-        self.vector_store = QdrantVectorStore(
-            client=client,
-            collection_name="rag_collection",
-            embedding=self.embeddings
-        )
-        {% elif vector_store == 'supabase' %}
+        from qdrant_client.models import Distance, VectorParams
+
+        client = QdrantClient(url=config("QDRANT_URL"), api_key=config("QDRANT_API_KEY", default="") or None)
+        if not client.collection_exists(COLLECTION):
+            size = len(self.embeddings.embed_query("dimension probe"))
+            client.create_collection(COLLECTION, vectors_config=VectorParams(size=size, distance=Distance.COSINE))
+        return QdrantVectorStore(client=client, collection_name=COLLECTION, embedding=self.embeddings)
+{% elif vector_store == 'supabase' %}
         from langchain_postgres import PGVector
-        self.vector_store = PGVector(
+
+        # Postgres with the pgvector extension (Supabase: Project settings → Database → connection string).
+        # The URL must use the psycopg 3 driver: postgresql+psycopg://user:pass@host:5432/postgres
+        return PGVector(
             embeddings=self.embeddings,
-            collection_name="rag_collection",
-            connection=config("SUPABASE_DB_URL"),
+            collection_name=COLLECTION,
+            connection=config("PGVECTOR_URL"),
             use_jsonb=True,
         )
-        {% elif vector_store == 'upstash' %}
+{% elif vector_store == 'upstash' %}
         from langchain_community.vectorstores.upstash import UpstashVectorStore
-        self.vector_store = UpstashVectorStore(
+
+        # The Upstash index dimension must match the embedding model's output size.
+        return UpstashVectorStore(
             embedding=self.embeddings,
             index_url=config("UPSTASH_VECTOR_REST_URL"),
-            index_token=config("UPSTASH_VECTOR_REST_TOKEN")
+            index_token=config("UPSTASH_VECTOR_REST_TOKEN"),
+            namespace=COLLECTION,
         )
-        {% endif %}
-        
-    def _retrieve_context(self, query: str) -> str:
-        docs = self.vector_store.similarity_search(query, k=3)
-        return "\n\n".join([doc.page_content for doc in docs])
+{% endif %}
 
-    async def invoke(self, query: str, session_id: str = None) -> str:
-        template = """Answer the question based only on the following context:
-        {context}
-        
-        Question: {question}
+    async def vector_store(self):
+        if self._store is None:
+            async with self._store_lock:
+                if self._store is None:
+                    self._store = await asyncio.to_thread(self._build_vector_store)
+        return self._store
+
+    async def invoke(self, query: str, session_id: str | None = None) -> dict:
+        store = await self.vector_store()
+        docs = await store.asimilarity_search(query, k=TOP_K)
+        context = "\n\n---\n\n".join(doc.page_content for doc in docs)
+        answer = await self.chain.ainvoke({"context": context, "question": query})
+        return {"answer": answer, "sources": [doc.metadata for doc in docs]}
+
+    async def ingest(self, items: list[dict]) -> int:
+        """Index documents. Each item: {"id": str, "text": str, "metadata": dict (optional)}.
+
+        Texts are split into chunks; chunk ids are derived from the item id, so re-ingesting
+        the same item overwrites its chunks instead of duplicating them.
         """
-        prompt = PromptTemplate.from_template(template)
-        
-        chain = (
-            {"context": lambda q: self._retrieve_context(q), "question": RunnablePassthrough()}
-            | prompt
-            | self.llm
-            | StrOutputParser()
-        )
-        
-        return await chain.ainvoke(query)
+        documents, ids = [], []
+        for item in items:
+            source_id = str(item["id"])
+            metadata = {**(item.get("metadata") or {}), "source_id": source_id}
+            for i, chunk in enumerate(self.splitter.split_text(item["text"] or "")):
+                documents.append(Document(page_content=chunk, metadata={**metadata, "chunk": i}))
+                ids.append(str(uuid.uuid5(uuid.NAMESPACE_URL, f"{COLLECTION}/{source_id}/{i}")))
+        if not documents:
+            return 0
+        store = await self.vector_store()
+        await store.aadd_documents(documents, ids=ids)
+        return len(documents)
+{% if has_sql %}
 
     async def refresh(self, db) -> int:
-        """Fetch rows from mart_post and index them into the vector store."""
-        # 1. Fetch data from mart_post (the gold table)
-        # Note: We assume the gold table has a 'content' column formatted for RAG
-        query = text("SELECT source_id, content, author, url, source FROM mart_post")
-        result = db.execute(query)
-        rows = result.fetchall()
-        
-        documents = []
-        ids = []
-        for row in rows:
-            doc = Document(
-                page_content=row.content or "",
-                metadata={
-                    "source_id": row.source_id,
-                    "author": row.author,
-                    "url": row.url,
-                    "source": row.source
-                }
-            )
-            documents.append(doc)
-            ids.append(row.source_id)
-        
-        if documents:
-            # 2. Index into vector store
-            self.vector_store.add_documents(documents, ids=ids)
-            return len(documents)
-        return 0
+        """Re-index the rows returned by {{ service_name_upper }}_SOURCE_QUERY.
+
+        The query must return an `id` and a `content` column; any other column becomes metadata.
+        Example: {{ service_name_upper }}_SOURCE_QUERY=SELECT id, body AS content, title, url FROM articles
+        """
+        from sqlalchemy import text
+
+        query = config("{{ service_name_upper }}_SOURCE_QUERY", default="")
+        if not query:
+            raise ValueError("Set {{ service_name_upper }}_SOURCE_QUERY in .env to enable /refresh")
+        rows = await asyncio.to_thread(lambda: db.execute(text(query)).mappings().all())
+        scalar = (str, int, float, bool, type(None))
+        items = [
+            {
+                "id": row["id"],
+                "text": row["content"],
+                # dates, decimals... are stored as strings: vector stores only accept JSON scalars
+                "metadata": {k: v if isinstance(v, scalar) else str(v) for k, v in row.items() if k not in ("id", "content")},
+            }
+            for row in rows
+        ]
+        return await self.ingest(items)
+{% endif %}

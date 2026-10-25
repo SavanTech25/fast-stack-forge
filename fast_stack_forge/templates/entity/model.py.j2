@@ -6,10 +6,17 @@ class {{ entity_name }}(Entity):
         super().__init__("{{ table_name }}")
 
 {% else %}
-from sqlalchemy import Column, Integer, String, Boolean, Float, Text{% if has_date %}, Date{% endif %}{% if has_datetime %}, DateTime{% endif %}{% if has_fk %}, ForeignKey{% endif %}
+from sqlalchemy import {{ sa_imports | join(', ') }}
 
+{% if has_fk %}
 from sqlalchemy.orm import relationship
+{% endif %}
+from {{ project_name }}.data.database import Base
 from {{ project_name }}.entity.base_entity import Entity
+{% if has_encrypt or has_hash %}
+from {{ project_name }}.utils.crypto import {% if has_encrypt %}encrypt_value, decrypt_value{% endif %}{% if has_encrypt and has_hash %}, {% endif %}{% if has_hash %}hash_value{% endif %}
+
+{% endif %}
 
 class {{ entity_name }}(Base, Entity):
     __tablename__ = "{{ table_name }}"
@@ -17,9 +24,9 @@ class {{ entity_name }}(Base, Entity):
 {% for field in fields %}
 {% if field.foreign_key %}
     {{ field.fk_column }} = Column(Integer, ForeignKey("{{ field.fk_table }}.id"), nullable=True)
-    {{ field.name }} = relationship("{{ field.foreign_key }}", back_populates="{{ table_name }}")
+    {{ field.name }} = relationship("{{ field.foreign_key }}")
 {% else %}
-    _{{ field.name }} = Column("{{ field.name }}", Text, nullable=True)
+    _{{ field.name }} = Column("{{ field.name }}", {{ 'Text' if field.encrypt or field.hash else field.sqlalchemy_type }}, nullable={{ field.nullable }})
 {% endif %}
 {% endfor %}
 
@@ -33,11 +40,11 @@ class {{ entity_name }}(Base, Entity):
 {% if field.encrypt %}
     @property
     def {{ field.name }}(self):
-        return decrypt_value(self._{{ field.name }})
+        return decrypt_value(self._{{ field.name }}) if self._{{ field.name }} else self._{{ field.name }}
 
     @{{ field.name }}.setter
     def {{ field.name }}(self, value: str):
-        self._{{ field.name }} = encrypt_value(value)
+        self._{{ field.name }} = encrypt_value(value) if value else value
 
 {% elif field.hash %}
     @property
@@ -46,7 +53,7 @@ class {{ entity_name }}(Base, Entity):
 
     @{{ field.name }}.setter
     def {{ field.name }}(self, value: str):
-        self._{{ field.name }} = hash_value(value)
+        self._{{ field.name }} = hash_value(value) if value else value
 
 {% elif not field.foreign_key %}
     @property

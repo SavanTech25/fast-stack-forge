@@ -1,0 +1,14 @@
+from {{ name }}.main import transform
+
+
+def test_transform_counts_trips_per_day(spark):
+    trips = spark.createDataFrame(
+        [("2024-01-01 08:00:00", 10.0), ("2024-01-01 09:30:00", 5.5), ("2024-01-02 10:00:00", 7.0)],
+        ["tpep_pickup_datetime", "fare_amount"],
+    )
+
+    rows = {row.pickup_date.isoformat(): row for row in transform(trips).collect()}
+
+    assert rows["2024-01-01"].trips == 2
+    assert rows["2024-01-01"].total_fare == 15.5
+    assert rows["2024-01-02"].trips == 1

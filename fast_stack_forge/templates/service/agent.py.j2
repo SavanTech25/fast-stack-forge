@@ -1,47 +1,47 @@
-import os
-from langchain.agents import tool, AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate
-{% if provider in ['openai', 'azure'] %}
-from langchain_openai import ChatOpenAI
-{% elif provider == 'anthropic' %}
-from langchain_anthropic import ChatAnthropic
-{% elif provider == 'mistral' %}
-from langchain_mistralai import ChatMistralAI
-{% elif provider == 'gemini' %}
-from langchain_google_genai import ChatGoogleGenerativeAI
-{% endif %}
+{% import "_providers.j2" as p %}
+"""{{ service_name }} — tool-calling agent (LangChain create_agent, {{ provider }})."""
+
+import uuid
+from datetime import datetime, timezone
+
+from decouple import config
+from langchain.agents import create_agent
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+{{ p.imports(provider) }}
+SYSTEM_PROMPT = "You are a helpful assistant. Use the tools when they help you answer."
+
 
 @tool
-def sample_tool(query: str) -> str:
-    """A sample tool that does something useful."""
-    return f"Processed by tool: {query}"
+def current_time() -> str:
+    """Return the current UTC date and time (ISO 8601)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+@tool
+def word_count(text: str) -> int:
+    """Count the words in a text."""
+    return len(text.split())
+
 
 class {{ service_name }}Service:
     def __init__(self):
-        {% if provider == 'openai' %}
-        self.llm = ChatOpenAI(model="gpt-4o", temperature=0)
-        {% elif provider == 'azure' %}
-        self.llm = ChatOpenAI(model="gpt-4o", temperature=0, azure_deployment="gpt-4o", api_version="2024-02-15-preview")
-        {% elif provider == 'anthropic' %}
-        self.llm = ChatAnthropic(model="claude-3-5-sonnet-20240620", temperature=0)
-        {% elif provider == 'mistral' %}
-        self.llm = ChatMistralAI(model="mistral-large-latest", temperature=0)
-        {% elif provider == 'gemini' %}
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
-        {% endif %}
-        
-        self.tools = [sample_tool]
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful AI assistant. Use tools if necessary."),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}"),
-        ])
-        
-        agent = create_tool_calling_agent(self.llm, self.tools, prompt)
-        self.agent_executor = AgentExecutor(agent=agent, tools=self.tools, verbose=True)
+        self.llm = {{ p.chat_model(provider) }}
+        self.tools = [current_time, word_count]
+        # InMemorySaver keeps each session's history in this process only (lost on restart,
+        # not shared between workers). Swap it for a persistent checkpointer in production,
+        # e.g. langgraph-checkpoint-postgres.
+        self.agent = create_agent(
+            self.llm,
+            self.tools,
+            system_prompt=SYSTEM_PROMPT,
+            checkpointer=InMemorySaver(),
+        )
 
-    async def invoke(self, query: str, session_id: str = None) -> str:
-        # TODO: Implement session history management if needed
-        response = await self.agent_executor.ainvoke({"input": query})
-        return response["output"]
+    async def invoke(self, query: str, session_id: str | None = None) -> dict:
+        session_id = session_id or str(uuid.uuid4())
+        result = await self.agent.ainvoke(
+            {"messages": [{"role": "user", "content": query}]},
+            config={"configurable": {"thread_id": session_id}},
+        )
+        return {"answer": result["messages"][-1].text, "session_id": session_id}

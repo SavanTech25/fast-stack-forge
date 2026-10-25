@@ -1,21 +1,27 @@
 import click
-from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
 from fast_stack_forge.parser import parse_fields
+from fast_stack_forge.utils import render as render_template, resolve_package_or_exit, write as _write
 
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "entity"
 
 def render(template_name, context):
-    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True)
-    return env.get_template(template_name).render(**context)
+    return render_template("entity", template_name, context)
+
 
 def write(path, content):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        click.echo(click.style(f"  {'skipped':>10}  {path}  (already exists)", fg="yellow"))
-        return
-    path.write_text(content)
-    click.echo(click.style(f"  {'created':>10}  {path}", fg="green"))
+    _write(path, content, overwrite=False)
+
+
+def sqlalchemy_imports(fields) -> list[str]:
+    names = {"Column", "Integer"}
+    for f in fields:
+        if f.foreign_key:
+            names.add("ForeignKey")
+        elif f.encrypt or f.hash:
+            names.add("Text")
+        else:
+            names.add(f.sqlalchemy_type.split("(")[0])
+    return sorted(names)
+
 
 def make_entity(entity_name, raw_fields, no_router=False, no_controller=False):
     click.echo(click.style(f"\n⚡ FastForge — make:entity {entity_name}\n", fg="cyan", bold=True))
@@ -25,26 +31,8 @@ def make_entity(entity_name, raw_fields, no_router=False, no_controller=False):
         click.echo(click.style(f"✗ {e}", fg="red"))
         raise SystemExit(1)
 
-    cwd = Path.cwd()
-    project_root = None
-    
-    for p in [cwd, *cwd.parents]:
-        if (p / "src").is_dir():
-            project_root = p
-            break
-            
-    if not project_root:
-        click.echo(click.style("✗ Could not resolve project root. Are you inside a FastForge project?", fg="red"))
-        raise SystemExit(1)
-        
-    src_dir = project_root / "src"
-    project_names = [d.name for d in src_dir.iterdir() if d.is_dir() and d.name not in ("__pycache__",) and not d.name.endswith(".egg-info")]
-    if not project_names:
-        click.echo(click.style("✗ No project package found inside 'src/'.", fg="red"))
-        raise SystemExit(1)
-        
-    project_name = project_names[0]
-    base = src_dir / project_name
+    project_root, project_name = resolve_package_or_exit()
+    base = project_root / "src" / project_name
 
     db_type = "sql"
     db_file = base / "data" / "database.py"
@@ -67,6 +55,7 @@ def make_entity(entity_name, raw_fields, no_router=False, no_controller=False):
         "has_encrypt": any(f.encrypt for f in fields),
         "has_hash": any(f.hash for f in fields),
         "has_fk": any(f.foreign_key for f in fields),
+        "sa_imports": sqlalchemy_imports(fields),
     }
     
     write(base / "entity" / f"{entity_name.lower()}.py", render("model.py.j2", ctx))
@@ -83,7 +72,7 @@ def make_entity(entity_name, raw_fields, no_router=False, no_controller=False):
             include_statement = f"app.include_router(r_{entity_name.lower()})"
             
             if include_statement not in content:
-                lines = content.split('\n')
+                lines = content.rstrip('\n').split('\n')
                 last_import_idx = 0
                 for i, line in enumerate(lines):
                     if line.startswith("import ") or line.startswith("from "):

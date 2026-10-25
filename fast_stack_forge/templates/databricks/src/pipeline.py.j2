@@ -1,0 +1,24 @@
+"""Lakeflow Declarative Pipeline (DLT): bronze → silver → gold on the NYC taxi sample."""
+
+import dlt
+from pyspark.sql import functions as F
+
+
+@dlt.table(comment="Raw trips, as ingested")
+def trips_bronze():
+    return spark.read.table("samples.nyctaxi.trips")  # noqa: F821 (`spark` is provided by the pipeline)
+
+
+@dlt.table(comment="Trips with a valid fare and a pickup date")
+@dlt.expect_or_drop("positive_fare", "fare_amount > 0")
+def trips_silver():
+    return dlt.read("trips_bronze").withColumn("pickup_date", F.to_date("tpep_pickup_datetime"))
+
+
+@dlt.table(comment="Trips and revenue per pickup zip code")
+def trips_per_zip_gold():
+    return (
+        dlt.read("trips_silver")
+        .groupBy("pickup_zip")
+        .agg(F.count("*").alias("trips"), F.round(F.sum("fare_amount"), 2).alias("total_fare"))
+    )

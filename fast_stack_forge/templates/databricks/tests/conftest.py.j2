@@ -1,0 +1,12 @@
+import pytest
+
+
+@pytest.fixture(scope="session")
+def spark():
+    """Spark session through Databricks Connect. Configure it with `databricks auth login` and .env."""
+    try:
+        from databricks.connect import DatabricksSession
+
+        return DatabricksSession.builder.getOrCreate()
+    except Exception as exc:  # noqa: BLE001 (no workspace configured: skip instead of failing)
+        pytest.skip(f"Databricks Connect is not configured: {exc}")

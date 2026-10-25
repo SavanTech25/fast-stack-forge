@@ -1,0 +1,77 @@
+version: 2
+
+models:
+  - name: [[ m.customers ]]
+    description: Customers, cleaned and renamed.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+
+  - name: [[ m.orders ]]
+    description: Orders, cleaned and renamed.
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['completed', 'pending', 'returned', 'cancelled']
+[% if archi == 'star' %]
+
+  - name: [[ m.l2 ]]
+    description: Customer dimension, one row per customer.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: [[ m.l3 ]]
+    description: Order facts, one row per order.
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('[[ m.l2 ]]')
+                field: customer_id
+      - name: amount
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+[% else %]
+
+  - name: [[ m.l2 ]]
+    description: Orders enriched with customer attributes.
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: [[ m.l3 ]]
+    description: One row per customer with their order history.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+      - name: lifetime_value
+        description: Sum of completed orders.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+[% endif %]

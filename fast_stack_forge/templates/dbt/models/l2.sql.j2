@@ -1,0 +1,29 @@
+[% if archi == 'star' %]
+-- Dimension: one row per customer
+select
+    customer_id,
+    customer_name,
+    country,
+    created_at
+from {{ ref('[[ m.customers ]]') }}
+[% else %]
+-- Orders enriched with customer attributes
+with customers as (
+    select * from {{ ref('[[ m.customers ]]') }}
+),
+
+orders as (
+    select * from {{ ref('[[ m.orders ]]') }}
+)
+
+select
+    orders.order_id,
+    orders.customer_id,
+    customers.customer_name,
+    customers.country,
+    orders.order_date,
+    orders.amount,
+    orders.status
+from orders
+left join customers on orders.customer_id = customers.customer_id
+[% endif %]

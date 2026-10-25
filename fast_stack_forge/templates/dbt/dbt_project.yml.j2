@@ -1,8 +1,8 @@
-name: '{{ project_name }}'
+name: '[[ project_name ]]'
 version: '1.0.0'
 config-version: 2
 
-profile: '{{ project_name }}'
+profile: '[[ project_name ]]'
 
 model-paths: ["models"]
 analysis-paths: ["analyses"]
@@ -15,42 +15,20 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+seeds:
+  [[ project_name ]]:
+    +schema: raw
+
 models:
-  {{ project_name }}:
-    # Applies to all files under models/
+  [[ project_name ]]:
     +materialized: table
-    +tags:
-      - '{{ project_name }}'
-    
-    # Layer specific configs
-{% if archi == 'medallion' %}
-    bronze:
+    # [[ arch.help ]]
+    [[ arch.layers[0] ]]:
       +materialized: view
-      +tags: ['bronze']
-    silver:
+      +tags: ['[[ arch.layers[0] ]]']
+    [[ arch.layers[1] ]]:
+      +materialized: [[ 'view' if archi == 'default' else 'table' ]]
+      +tags: ['[[ arch.layers[1] ]]']
+    [[ arch.layers[2] ]]:
       +materialized: table
-      +tags: ['silver']
-    gold:
-      +materialized: table
-      +tags: ['gold']
-{% elif archi == 'star' %}
-    raw:
-      +materialized: view
-      +tags: ['raw']
-    dim:
-      +materialized: table
-      +tags: ['dim']
-    fact:
-      +materialized: table
-      +tags: ['fact']
-{% else %}
-    stg:
-      +materialized: view
-      +tags: ['staging']
-    int:
-      +materialized: table
-      +tags: ['intermediate']
-    mart:
-      +materialized: table
-      +tags: ['mart']
-{% endif %}
+      +tags: ['[[ arch.layers[2] ]]']
