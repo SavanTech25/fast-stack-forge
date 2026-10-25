@@ -1,0 +1,43 @@
+# Load .env (if present) and export it to the Databricks CLI, pytest and dbt
+-include .env
+export
+
+TARGET ?= dev
+
+.PHONY: help install login test lint validate deploy run deploy-prod destroy{% if dbt %} dbt-build{% endif %}
+
+help:  ## Show available commands
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+install:  ## Install the dev environment (Databricks Connect, pytest, ruff)
+	uv sync
+
+login:  ## Authenticate the Databricks CLI on the workspace
+	databricks auth login --host {{ host }}
+
+test:  ## Run the tests through Databricks Connect
+	uv run pytest
+
+lint:  ## Lint and check formatting
+	uv run ruff check src tests
+	uv run ruff format --check src tests
+
+validate:  ## Validate the bundle (TARGET=dev|prod)
+	databricks bundle validate -t $(TARGET)
+
+deploy:  ## Build the wheel and deploy the bundle (TARGET=dev|prod)
+	databricks bundle deploy -t $(TARGET)
+
+run:  ## Run the job on the workspace
+	databricks bundle run -t $(TARGET) {{ name }}_job
+
+deploy-prod:  ## Deploy to the prod target
+	$(MAKE) deploy TARGET=prod
+
+destroy:  ## Delete everything the bundle deployed (TARGET=dev|prod)
+	databricks bundle destroy -t $(TARGET)
+{% if dbt %}
+
+dbt-build:  ## Run dbt locally against the SQL warehouse
+	cd dbt_project && DBT_PROFILES_DIR=dbt_profiles uv run dbt deps && DBT_PROFILES_DIR=dbt_profiles uv run dbt build
+{% endif %}

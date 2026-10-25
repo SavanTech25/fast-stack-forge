@@ -1,0 +1,42 @@
+# Databricks Asset Bundle: https://docs.databricks.com/dev-tools/bundles/
+bundle:
+  name: {{ name }}
+
+include:
+  - resources/*.yml
+
+{% if wheel %}
+artifacts:
+  python_artifact:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+{% endif %}
+variables:
+  catalog:
+    description: Unity Catalog catalog the project writes to
+    default: {{ catalog }}
+  schema:
+    description: Schema created by this bundle (prefixed with dev_<user>_ in the dev target)
+    default: {{ name }}
+{% if dbt %}
+  warehouse_id:
+    description: SQL warehouse used by the dbt task
+    lookup:
+      warehouse: "{{ warehouse }}"
+{% endif %}
+
+targets:
+  dev:
+    # Development mode: resources are prefixed with [dev <user>] and schedules are paused
+    mode: development
+    default: true
+    workspace:
+      host: {{ host }}
+
+  prod:
+    mode: production
+    workspace:
+      host: {{ host }}
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

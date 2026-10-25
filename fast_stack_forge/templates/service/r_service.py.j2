@@ -1,41 +1,92 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from {{ project_name }}.service.{{ service_name_lower }} import {{ service_name }}Service
-from {{ project_name }}.middleware.middleware import JWTBearer
-from {{ project_name }}.data.database import get_db
+from functools import lru_cache
+
+from fastapi import APIRouter, Depends, HTTPException{% if service_type == 'ocr' %}, UploadFile{% endif %}
+
+from loguru import logger
+{% if service_type != 'ocr' %}
+from pydantic import BaseModel{% if service_type == 'rag' %}, Field{% endif %}
+
+{% endif %}
+{% if service_type == 'ocr' %}
+from decouple import config
+{% endif %}
+{% if service_type == 'rag' and has_sql %}
 from sqlalchemy.orm import Session
 
-r_{{ service_name_lower }} = APIRouter(prefix="/{{ service_name_lower }}", tags=["{{ service_name }}"])
+from {{ project_name }}.data.database import get_db
+{% endif %}
+from {{ project_name }}.middleware.middleware import JWTBearer
+from {{ project_name }}.service.{{ service_name_lower }} import {{ service_name }}Service
+
+r_{{ service_name_lower }} = APIRouter(
+    prefix="/{{ service_name_lower }}",
+    tags=["{{ service_name }}"],
+    dependencies=[Depends(JWTBearer())],
+)
+
+
+@lru_cache
+def get_service() -> {{ service_name }}Service:
+    """One service per process: clients, vector store connections and agent memory are reused."""
+    return {{ service_name }}Service()
+
+
+async def _run(call, what: str):
+    try:
+        return await call
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception(f"{{ service_name }}: {what} failed")
+        raise HTTPException(status_code=502, detail=f"{{ service_name }} {what} failed, see the server logs")
+{% if service_type == 'ocr' %}
+
+
+MAX_UPLOAD_MB = config("{{ service_name_upper }}_MAX_UPLOAD_MB", default=20, cast=int)
+
+
+@r_{{ service_name_lower }}.post("")
+async def extract_{{ service_name_lower }}(file: UploadFile, service: {{ service_name }}Service = Depends(get_service)):
+    """Upload an image (PNG, JPEG, WebP, GIF) or a PDF and get its text back as Markdown."""
+    data = await file.read(MAX_UPLOAD_MB * 1024 * 1024 + 1)
+    if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File larger than {MAX_UPLOAD_MB} MB")
+    result = await _run(service.extract_text(data, file.content_type or "", file.filename or "document"), "extraction")
+    return {"status": "success", "data": result}
+{% else %}
+
 
 class {{ service_name }}Request(BaseModel):
-{% if service_type == 'ocr' %}
-    file_path_or_url: str
-{% else %}
     query: str
     session_id: str | None = None
+
+
+@r_{{ service_name_lower }}.post("")
+async def ask_{{ service_name_lower }}(req: {{ service_name }}Request, service: {{ service_name }}Service = Depends(get_service)):
+    result = await _run(service.invoke(req.query, req.session_id), "query")
+    return {"status": "success", "data": result}
 {% endif %}
-
-@r_{{ service_name_lower }}.post("", dependencies=[Depends(JWTBearer())])
-async def execute_{{ service_name_lower }}(req: {{ service_name }}Request):
-    try:
-        service = {{ service_name }}Service()
-        {% if service_type == 'ocr' %}
-        result = await service.extract_text(req.file_path_or_url)
-        {% else %}
-        result = await service.invoke(req.query, req.session_id)
-        {% endif %}
-        return {"status": "success", "data": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 {% if service_type == 'rag' %}
-@r_{{ service_name_lower }}.post("/refresh", dependencies=[Depends(JWTBearer())])
-async def refresh_{{ service_name_lower }}(db: Session = Depends(get_db)):
-    """Refresh the vector store from the Postgres mart_post table."""
-    try:
-        service = {{ service_name }}Service()
-        count = await service.refresh(db)
-        return {"status": "success", "message": f"Successfully indexed {count} items into the vector store"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")
+
+
+class {{ service_name }}Document(BaseModel):
+    id: str
+    text: str
+    metadata: dict = Field(default_factory=dict)
+
+
+@r_{{ service_name_lower }}.post("/ingest")
+async def ingest_{{ service_name_lower }}(docs: list[{{ service_name }}Document], service: {{ service_name }}Service = Depends(get_service)):
+    """Index documents. Sending a document again with the same id replaces it."""
+    count = await _run(service.ingest([d.model_dump() for d in docs]), "ingestion")
+    return {"status": "success", "indexed_chunks": count}
+{% if has_sql %}
+
+
+@r_{{ service_name_lower }}.post("/refresh")
+async def refresh_{{ service_name_lower }}(db: Session = Depends(get_db), service: {{ service_name }}Service = Depends(get_service)):
+    """Re-index the rows of {{ service_name_upper }}_SOURCE_QUERY (see .env)."""
+    count = await _run(service.refresh(db), "refresh")
+    return {"status": "success", "indexed_chunks": count}
+{% endif %}
 {% endif %}

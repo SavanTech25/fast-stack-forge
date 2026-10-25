@@ -1,6 +1,10 @@
-from {{ project_name|lower }}.data.actions import make_crud_action, handle_file
-from {{ project_name|lower }}.utils.controller import from_model_to_dict, serialize_model
+{% if db == "mongodb" %}
 from fastapi import UploadFile
+from {{ project_name|lower }}.data.actions import make_crud_action, handle_file
+{% else %}
+from {{ project_name|lower }}.data.actions import make_crud_action
+{% endif %}
+from {{ project_name|lower }}.utils.controller import from_model_to_dict, serialize_model
 
 class Entity:
     

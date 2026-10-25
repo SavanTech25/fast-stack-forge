@@ -1,5 +1,0 @@
-from {{ project_name }}.utils.crud_router import create_crud_router
-from {{ project_name }}.entity.{{ entity_name_lower }} import {{ entity_name }}
-from {{ project_name }}.schema.{{ entity_name_lower }} import {{ entity_name }}Create
-
-r_{{ entity_name_lower }} = create_crud_router({{ entity_name }}, {{ entity_name }}Create, "{{ entity_name_lower }}")

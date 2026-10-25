@@ -1,13 +1,10 @@
 """init:ds-data command — scaffold an AstroData-style data science project."""
 
-import re
 import sys
 import click
 from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
 from fast_stack_forge.commands.init import merge_pyproject_deps_and_scripts, merge_makefile_targets
-
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "ds_data"
+from fast_stack_forge.utils import Prompter, find_project_root, render, write
 
 DB_CHOICES = ["sqlite", "postgresql", "mysql", "mongodb"]
 
@@ -33,44 +30,19 @@ API_REQUIREMENTS = [
 ]
 
 
-def sanitize_name(name: str) -> str:
-    name = name.strip().lower()
-    name = re.sub(r"[\s\-\.]+", "_", name)
-    name = re.sub(r"[^a-z0-9_]", "", name)
-    name = re.sub(r"_+", "_", name)
-    name = name.strip("_")
-    return name
-
-
 def get_python_versions() -> list[str]:
     c = sys.version_info
     return [f"{c.major}.{c.minor}", f"{c.major}.{c.minor - 1}", f"{c.major}.{c.minor - 2}"]
 
 
 def render_ds(template_name: str, context: dict) -> str:
-    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), keep_trailing_newline=True)
-    return env.get_template(template_name).render(**context)
+    return render("ds_data", template_name, context, trim_blocks=False, lstrip_blocks=False)
 
 
-def write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    click.echo(f"  {'created':>10}  {path}")
-
-
-def init_ds_data_project(package_name: str, include_api: bool, include_data: bool) -> None:
-    repo_name = sanitize_name(package_name)
-    if repo_name != package_name:
-        click.echo(click.style(f"  ℹ  Name sanitized: '{package_name}' → '{repo_name}'", fg="yellow"))
-
-    cwd = Path.cwd()
-    project_root = None
-    
-    # Try to find project root (check if we are inside an existing FastForge project)
-    for p in [cwd, *cwd.parents]:
-        if (p / "src").is_dir() and (p / "pyproject.toml").is_file():
-            project_root = p
-            break
+def init_ds_data_project(package_name: str, include_api: bool, include_data: bool, assume_yes: bool = False) -> None:
+    ask = Prompter(assume_yes)
+    repo_name = ask.name("Project name", package_name, default="my_ds_project")
+    project_root = find_project_root(require_pyproject=True)
 
     if project_root:
         base = project_root
@@ -88,68 +60,38 @@ def init_ds_data_project(package_name: str, include_api: bool, include_data: boo
 
     api_project_db = None
     create_api_project = False
-    
+
+    if include_api is None:
+        include_api = ask.confirm("Include a FastAPI skeleton inside the package (src/<name>/api)?", default=False)
+    if include_data is None:
+        include_data = ask.confirm("Create data/ folders (raw, interim, processed, external)?", default=False)
+
     # Only ask for companion FastAPI project if NOT already inside an existing workspace
     if not project_root:
-        create_api_project = click.confirm(
+        create_api_project = ask.confirm(
             "Do you also want to create a companion FastAPI backend project "
             f"(named '{repo_name}_api')?",
             default=False,
         )
         if create_api_project:
-            click.echo("Select database for the FastAPI project:")
-            for i, db in enumerate(DB_CHOICES, 1):
-                click.echo(f"  [{i}] {db}")
-            db_choice = click.prompt(
-                "Choice",
-                type=click.IntRange(1, len(DB_CHOICES)),
-                default=1,
-                show_default=True,
-            )
-            api_project_db = DB_CHOICES[db_choice - 1]
+            api_project_db = ask.choice("Database for the FastAPI project:", DB_CHOICES, "sqlite")
 
     py_versions = get_python_versions()
-    click.echo("\nSelect Python version:")
-    for i, v in enumerate(py_versions):
-        label = " (current)" if i == 0 else f" (current-{i})"
-        click.echo(f"  [{i + 1}] {v}{label}")
-    py_choice = click.prompt(
-        "Choice",
-        type=click.IntRange(1, len(py_versions)),
-        default=1,
-        show_default=True,
+    python_version = ask.choice(
+        "Python version:",
+        [(v, "(current)" if i == 0 else f"(current-{i})") for i, v in enumerate(py_versions)],
+        py_versions[0],
     )
-    python_version = py_versions[py_choice - 1]
 
-    is_open_source = click.confirm("\nIs this project open source?", default=True)
+    is_open_source = ask.confirm("\nIs this project open source?", default=True)
     if is_open_source:
-        license_choice = click.prompt(
-            "License",
-            type=click.Choice(["MIT", "BSD-3-Clause", "Apache-2.0", "GPL-3.0"]),
-            default="MIT",
-            show_default=True,
-        )
+        license_choice = ask.choice("License:", ["MIT", "BSD-3-Clause", "Apache-2.0", "GPL-3.0"], "MIT")
     else:
         license_choice = "Proprietary"
 
-    description = click.prompt(
-        "\nProject description (leave blank to skip)",
-        default="",
-        show_default=False,
-    ).strip() or f"A data science project: {repo_name}"
-
-    author_name = click.prompt(
-        "Author name (leave blank to skip)",
-        default="",
-        show_default=False,
-    ).strip()
-    author_email = ""
-    if author_name:
-        author_email = click.prompt(
-            "Author email (leave blank to skip)",
-            default="",
-            show_default=False,
-        ).strip()
+    description = ask.text("\nProject description (leave blank to skip)") or f"A data science project: {repo_name}"
+    author_name = ask.text("Author name (leave blank to skip)")
+    author_email = ask.text("Author email (leave blank to skip)") if author_name else ""
 
     click.echo()
 

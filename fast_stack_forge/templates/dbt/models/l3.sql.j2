@@ -1,0 +1,35 @@
+[% if archi == 'star' %]
+-- Fact: one row per order, keyed to dim_customers
+with orders as (
+    select * from {{ ref('[[ m.orders ]]') }}
+),
+
+customers as (
+    select * from {{ ref('[[ m.l2 ]]') }}
+)
+
+select
+    orders.order_id,
+    customers.customer_id,
+    orders.order_date,
+    orders.amount,
+    orders.status
+from orders
+inner join customers on orders.customer_id = customers.customer_id
+[% else %]
+-- One row per customer with their order history
+with customer_orders as (
+    select * from {{ ref('[[ m.l2 ]]') }}
+)
+
+select
+    customer_id,
+    customer_name,
+    country,
+    count(order_id) as number_of_orders,
+    min(order_date) as first_order_date,
+    max(order_date) as last_order_date,
+    sum(case when status = 'completed' then amount else 0 end) as lifetime_value
+from customer_orders
+group by customer_id, customer_name, country
+[% endif %]

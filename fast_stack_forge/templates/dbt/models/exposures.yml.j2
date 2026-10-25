@@ -1,0 +1,12 @@
+version: 2
+
+exposures:
+  - name: [[ m.l3 ]]_dashboard
+    type: dashboard
+    maturity: medium
+    description: Example dashboard built on the [[ arch.layers[2] ]] layer.
+    depends_on:
+      - ref('[[ m.l3 ]]')
+    owner:
+      name: Data Team
+      email: data@example.com

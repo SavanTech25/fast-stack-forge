@@ -1,0 +1,40 @@
+# Load .env (if present) and export its variables so dbt can read them
+-include .env
+export
+
+.PHONY: help install debug seed run test build snapshot docs clean model
+
+help:  ## Show available commands
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+
+install:  ## Install dbt and dbt packages
+	uv sync
+	uv run dbt deps
+
+debug:  ## Check the connection to the warehouse
+	uv run dbt debug
+
+seed:  ## Load the CSV files in seeds/
+	uv run dbt seed
+
+run:  ## Build the models
+	uv run dbt run
+
+test:  ## Run the data tests
+	uv run dbt test
+
+build:  ## Seed, run, snapshot and test everything in DAG order
+	uv run dbt build
+
+snapshot:  ## Run the snapshots
+	uv run dbt snapshot
+
+docs:  ## Generate and serve the documentation site
+	uv run dbt docs generate
+	uv run dbt docs serve
+
+clean:  ## Remove target/ and dbt_packages/
+	uv run dbt clean
+
+model:  ## New model: make model name=fct_sales layer=[[ arch.layers[2] ]]
+	fast-stack-forge make:dbt $(name) $(if $(layer),--layer $(layer),)

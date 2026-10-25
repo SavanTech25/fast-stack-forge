@@ -1,0 +1,35 @@
+def model(dbt, session):
+    """Example dbt Python model: revenue per order status."""
+[% if adapter == 'databricks' %]
+    # Python models run on a cluster, not on the SQL warehouse:
+    # see https://docs.getdbt.com/reference/resource-configs/databricks-configs#python-submission-methods
+    dbt.config(materialized="table", submission_method="serverless_cluster")
+[% else %]
+    dbt.config(materialized="table")
+[% endif %]
+
+    orders = dbt.ref("[[ m.orders ]]")
+[% if adapter == 'duckdb' %]
+
+    # dbt-duckdb hands you a DuckDB relation (call .df() to get a pandas DataFrame)
+    return orders.aggregate(
+        "status, count(*) as number_of_orders, sum(amount) as revenue",
+        "status",
+    )
+[% elif adapter == 'databricks' %]
+
+    from pyspark.sql import functions as F
+
+    return orders.groupBy("status").agg(
+        F.count("*").alias("number_of_orders"),
+        F.sum("amount").alias("revenue"),
+    )
+[% elif adapter == 'snowflake' %]
+
+    from snowflake.snowpark.functions import col, count, sum as sum_
+
+    return orders.group_by("status").agg(
+        count(col("order_id")).alias("number_of_orders"),
+        sum_(col("amount")).alias("revenue"),
+    )
+[% endif %]

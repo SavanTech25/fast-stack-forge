@@ -1,0 +1,110 @@
+{% set schema = "${resources.schemas." ~ name ~ "_schema.name}" %}
+{% set prev = none %}
+resources:
+  jobs:
+    {{ name }}_job:
+      name: {{ name }}_job
+      trigger:
+        periodic:
+          interval: 1
+          unit: DAYS
+      tasks:
+{% if notebook %}
+        - task_key: ingest
+          notebook_task:
+            notebook_path: ../src/notebooks/ingest.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: {{ schema }}
+{% if not serverless %}
+          job_cluster_key: job_cluster
+{% endif %}
+{% set prev = "ingest" %}
+{% endif %}
+{% if pipeline %}
+        - task_key: refresh_pipeline
+{% if prev %}
+          depends_on:
+            - task_key: {{ prev }}
+{% endif %}
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.{{ name }}_pipeline.id}
+{% set prev = "refresh_pipeline" %}
+{% endif %}
+{% if wheel %}
+        - task_key: transform
+{% if prev %}
+          depends_on:
+            - task_key: {{ prev }}
+{% endif %}
+          python_wheel_task:
+            package_name: {{ name }}
+            entry_point: main
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --schema
+              - {{ schema }}
+{% if notebook %}
+              - --source
+              - ${var.catalog}.{{ schema }}.raw_trips
+{% endif %}
+{% if serverless %}
+          environment_key: default
+{% else %}
+          job_cluster_key: job_cluster
+          libraries:
+            - whl: ../dist/*.whl
+{% endif %}
+{% set prev = "transform" %}
+{% endif %}
+{% if dbt %}
+        - task_key: dbt
+{% if prev %}
+          depends_on:
+            - task_key: {{ prev }}
+{% endif %}
+          dbt_task:
+            project_directory: ../dbt_project
+            warehouse_id: ${var.warehouse_id}
+            catalog: ${var.catalog}
+            schema: {{ schema }}
+            commands:
+              - dbt deps
+              - dbt build
+{% if serverless %}
+          environment_key: dbt
+{% else %}
+          job_cluster_key: job_cluster
+          libraries:
+            - pypi:
+                package: dbt-databricks>=1.9,<2.0
+{% endif %}
+{% endif %}
+{% if serverless and (wheel or dbt) %}
+      environments:
+{% if wheel %}
+        - environment_key: default
+          spec:
+            environment_version: "{{ runtime.env_version }}"
+            dependencies:
+              - ../dist/*.whl
+{% endif %}
+{% if dbt %}
+        - environment_key: dbt
+          spec:
+            environment_version: "{{ runtime.env_version }}"
+            dependencies:
+              - dbt-databricks>=1.9,<2.0
+{% endif %}
+{% elif not serverless %}
+      job_clusters:
+        - job_cluster_key: job_cluster
+          new_cluster:
+            spark_version: {{ runtime.spark_version }}
+            node_type_id: {{ node_type }}
+            data_security_mode: SINGLE_USER
+            autoscale:
+              min_workers: 1
+              max_workers: 2
+{% endif %}

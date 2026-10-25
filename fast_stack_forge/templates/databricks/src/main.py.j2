@@ -1,0 +1,45 @@
+"""{{ name }} job entry point, run by the `transform` task of the bundle (python_wheel_task)."""
+
+import argparse
+import os
+
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+
+
+def get_spark() -> SparkSession:
+    """The cluster's Spark session on Databricks, Databricks Connect when running locally."""
+    if os.getenv("DATABRICKS_RUNTIME_VERSION"):
+        return SparkSession.builder.getOrCreate()
+    from databricks.connect import DatabricksSession
+
+    return DatabricksSession.builder.getOrCreate()
+
+
+def transform(trips: DataFrame) -> DataFrame:
+    """Number of trips and total fare per pickup day."""
+    return (
+        trips.withColumn("pickup_date", F.to_date("tpep_pickup_datetime"))
+        .groupBy("pickup_date")
+        .agg(
+            F.count("*").alias("trips"),
+            F.round(F.sum("fare_amount"), 2).alias("total_fare"),
+        )
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--catalog", default="{{ catalog }}")
+    parser.add_argument("--schema", default="{{ name }}")
+    parser.add_argument("--source", default="samples.nyctaxi.trips")
+    args = parser.parse_args()
+
+    spark = get_spark()
+    target = f"{args.catalog}.{args.schema}.daily_trips"
+    transform(spark.read.table(args.source)).write.mode("overwrite").saveAsTable(target)
+    print(f"Wrote {target}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,14 @@
+.databricks/
+build/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+{% if dbt %}
+dbt_project/target/
+dbt_project/dbt_packages/
+dbt_project/logs/
+{% endif %}

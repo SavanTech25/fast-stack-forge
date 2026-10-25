@@ -1,36 +1,50 @@
-{{ project_name }}:
+# Connection settings. Secrets are read from environment variables (see .env.example).
+[[ project_name ]]:
   target: dev
   outputs:
-    dev:
-{% if connector == 'snowflake' %}
-      type: snowflake
-      account: "{{ '{{ env_var(\"SNOWFLAKE_ACCOUNT\") }}' }}"
-      user: "{{ '{{ env_var(\"SNOWFLAKE_USER\") }}' }}"
-      password: "{{ '{{ env_var(\"SNOWFLAKE_PASSWORD\") }}' }}"
-      role: "{{ '{{ env_var(\"SNOWFLAKE_ROLE\") }}' }}"
-      database: "{{ '{{ env_var(\"SNOWFLAKE_DATABASE\") }}' }}"
-      warehouse: "{{ '{{ env_var(\"SNOWFLAKE_WAREHOUSE\") }}' }}"
-      schema: dev
+[% for target in ['dev', 'prod'] %]
+    [[ target ]]:
+[% if adapter == 'duckdb' %]
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '[[ project_name ]][[ '' if target == 'dev' else '_prod' ]].duckdb') }}"
+      schema: main
       threads: 4
-      client_session_keep_alive: False
-{% elif connector == 'bigquery' %}
+[% elif adapter == 'postgres' %]
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      user: "{{ env_var('POSTGRES_USER', 'postgres') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', '') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'postgres') }}"
+      schema: "{{ env_var('DBT_SCHEMA', '[[ target ]]') }}"
+      threads: 4
+[% elif adapter == 'snowflake' %]
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      schema: "{{ env_var('DBT_SCHEMA', '[[ target ]]') }}"
+      threads: 4
+      client_session_keep_alive: false
+[% elif adapter == 'bigquery' %]
       type: bigquery
       method: service-account
-      project: "{{ '{{ env_var(\"BQ_PROJECT\") }}' }}"
-      dataset: dev
+      project: "{{ env_var('BQ_PROJECT') }}"
+      keyfile: "{{ env_var('BQ_KEYFILE') }}"
+      dataset: "{{ env_var('DBT_SCHEMA', '[[ target ]]') }}"
+      location: "{{ env_var('BQ_LOCATION', 'EU') }}"
       threads: 4
-      keyfile: "{{ '{{ env_var(\"BQ_KEYFILE\") }}' }}"
-{% elif connector == 'postgres' %}
-      type: postgres
-      host: localhost
-      user: postgres
-      password: password
-      port: 5432
-      dbname: dbt_db
-      schema: dev
+[% elif adapter == 'databricks' %]
+      type: databricks
+      # Host WITHOUT https://. In a bundle dbt task, Databricks generates its own profile.
+      host: "{{ env_var('DBT_HOST') }}"
+      token: "{{ env_var('DBT_ACCESS_TOKEN') }}"
+      http_path: "{{ env_var('DBT_HTTP_PATH', '/sql/1.0/warehouses/[[ warehouse_id or '<warehouse-id>' ]]') }}"
+      catalog: "{{ env_var('DBT_CATALOG', '[[ catalog ]]') }}"
+      schema: "{{ env_var('DBT_SCHEMA', '[[ target ]]') }}"
       threads: 4
-{% else %}
-      type: duckdb
-      path: '{{ project_name }}.duckdb'
-      threads: 4
-{% endif %}
+[% endif %]
+[% endfor %]

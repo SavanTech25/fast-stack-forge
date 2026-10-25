@@ -1,0 +1,87 @@
+{#- Shared LangChain chat model / embeddings setup, one branch per provider.
+    Keys are read with python-decouple (.env), so they are passed explicitly:
+    LangChain only looks at os.environ, which .env does not fill. -#}
+
+{% macro imports(provider, embeddings=False) %}
+{% if provider == 'openai' %}
+from langchain_openai import ChatOpenAI{% if embeddings %}, OpenAIEmbeddings{% endif %}
+
+{% elif provider == 'azure' %}
+from langchain_openai import AzureChatOpenAI{% if embeddings %}, AzureOpenAIEmbeddings{% endif %}
+
+{% elif provider == 'anthropic' %}
+from langchain_anthropic import ChatAnthropic
+{% if embeddings %}
+from langchain_voyageai import VoyageAIEmbeddings  # Anthropic has no embeddings API; Voyage AI is its recommended partner
+{% endif %}
+{% elif provider == 'mistral' %}
+from langchain_mistralai import ChatMistralAI{% if embeddings %}, MistralAIEmbeddings{% endif %}
+
+{% elif provider == 'gemini' %}
+from langchain_google_genai import ChatGoogleGenerativeAI{% if embeddings %}, GoogleGenerativeAIEmbeddings{% endif %}
+
+{% endif %}
+{% endmacro %}
+
+{% macro chat_model(provider) %}
+{% if provider == 'openai' %}
+ChatOpenAI(
+            model=config("OPENAI_MODEL", default="gpt-5.5"),
+            api_key=config("OPENAI_API_KEY"),
+        )
+{%- elif provider == 'azure' %}
+AzureChatOpenAI(
+            azure_deployment=config("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+            azure_endpoint=config("AZURE_OPENAI_ENDPOINT"),
+            api_key=config("AZURE_OPENAI_API_KEY"),
+            api_version=config("AZURE_OPENAI_API_VERSION", default="2024-10-21"),
+        )
+{%- elif provider == 'anthropic' %}
+ChatAnthropic(
+            model=config("ANTHROPIC_MODEL", default="claude-opus-5-5"),
+            api_key=config("ANTHROPIC_API_KEY"),
+            max_tokens=16000,
+        )
+{%- elif provider == 'mistral' %}
+ChatMistralAI(
+            model=config("MISTRAL_MODEL", default="mistral-large-latest"),
+            api_key=config("MISTRAL_API_KEY"),
+        )
+{%- elif provider == 'gemini' %}
+ChatGoogleGenerativeAI(
+            model=config("GEMINI_MODEL", default="gemini-flash-latest"),
+            api_key=config("GEMINI_API_KEY"),
+        )
+{%- endif %}
+{% endmacro %}
+
+{% macro embeddings(provider) %}
+{% if provider == 'openai' %}
+OpenAIEmbeddings(
+            model=config("OPENAI_EMBEDDING_MODEL", default="text-embedding-3-small"),
+            api_key=config("OPENAI_API_KEY"),
+        )
+{%- elif provider == 'azure' %}
+AzureOpenAIEmbeddings(
+            azure_deployment=config("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),
+            azure_endpoint=config("AZURE_OPENAI_ENDPOINT"),
+            api_key=config("AZURE_OPENAI_API_KEY"),
+            api_version=config("AZURE_OPENAI_API_VERSION", default="2024-10-21"),
+        )
+{%- elif provider == 'anthropic' %}
+VoyageAIEmbeddings(
+            model=config("VOYAGE_EMBEDDING_MODEL", default="voyage-4"),
+            api_key=config("VOYAGE_API_KEY"),
+        )
+{%- elif provider == 'mistral' %}
+MistralAIEmbeddings(
+            model=config("MISTRAL_EMBEDDING_MODEL", default="mistral-embed"),
+            api_key=config("MISTRAL_API_KEY"),
+        )
+{%- elif provider == 'gemini' %}
+GoogleGenerativeAIEmbeddings(
+            model=config("GEMINI_EMBEDDING_MODEL", default="gemini-embedding-2"),
+            api_key=config("GEMINI_API_KEY"),
+        )
+{%- endif %}
+{% endmacro %}

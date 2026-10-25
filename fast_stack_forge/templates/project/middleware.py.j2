@@ -20,7 +20,7 @@ class JWTBearer(HTTPBearer):
         try:
             jwt.decode(
                 jwtoken,
-                config("SECRET_KEY", default="change-me-in-production"),
+                config("SECRET_KEY"),
                 algorithms=[config("ALGORITHM", default="HS256")]
             )
             return True

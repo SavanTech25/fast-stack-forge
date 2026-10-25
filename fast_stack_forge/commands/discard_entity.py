@@ -1,29 +1,12 @@
 import click
-from pathlib import Path
+
+from fast_stack_forge.utils import resolve_package_or_exit
 
 def discard_entity(entity_name):
     click.echo(click.style(f"\n⚡ FastForge — discard:entity {entity_name}\n", fg="cyan", bold=True))
     
-    cwd = Path.cwd()
-    project_root = None
-    
-    for p in [cwd, *cwd.parents]:
-        if (p / "src").is_dir():
-            project_root = p
-            break
-            
-    if not project_root:
-        click.echo(click.style("✗ Could not resolve project root. Are you inside a FastForge project?", fg="red"))
-        raise SystemExit(1)
-        
-    src_dir = project_root / "src"
-    project_names = [d.name for d in src_dir.iterdir() if d.is_dir() and d.name not in ("__pycache__",) and not d.name.endswith(".egg-info")]
-    if not project_names:
-        click.echo(click.style("✗ No project package found inside 'src/'.", fg="red"))
-        raise SystemExit(1)
-        
-    project_name = project_names[0]
-    base = src_dir / project_name
+    project_root, project_name = resolve_package_or_exit()
+    base = project_root / "src" / project_name
     entity_lower = entity_name.lower()
 
     files_to_delete = [
@@ -51,7 +34,7 @@ def discard_entity(entity_name):
         new_lines = [line for line in lines if import_statement not in line and include_statement not in line]
         
         if len(new_lines) != len(lines):
-            main_py_path.write_text('\n'.join(new_lines))
+            main_py_path.write_text('\n'.join(new_lines).rstrip('\n') + '\n')
             click.echo(click.style(f"  {'updated':>10}  {main_py_path} (removed router references)", fg="blue"))
 
     click.echo(click.style(f"\n✔ Entity '{entity_name}' discarded!\n", fg="green", bold=True))

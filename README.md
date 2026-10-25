@@ -3,14 +3,17 @@
 [![PyPI version](https://badge.fury.io/py/fast-stack-forge.svg)](https://badge.fury.io/py/fast-stack-forge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-FastForge is a powerful, Symfony-style CLI scaffolder designed to bootstrap and accelerate the development of FastAPI applications. It provides a robust, production-ready directory structure, fully integrated with `uv` for lightning-fast package management, alongside essential utilities like rate limiting, scheduling, WebSocket management, and JWT middleware.
+fast-stack-forge is a Symfony-style CLI scaffolder: answer a few questions and get a ready-to-run project, managed with `uv`.
+It covers FastAPI backends, **dbt** projects, **Databricks** Asset Bundles, AI services and data science projects.
 
 ## ✨ Features
 
+- **Interactive wizard**: `fast-stack-forge new` asks what you want to build, then a few simple questions. Every question also has a flag, and `--yes` takes the defaults (CI friendly).
 - **Rapid Scaffolding**: Generate full FastAPI projects with a single command.
 - **Entity Generation**: Automatically create models, schemas, controllers, and routers for your database entities.
-- **AI Service Integration**: Instantly scaffold RAG, Agentic, and OCR services powered by LLMs (OpenAI, Anthropic, Mistral, Azure).
-- **dbt Support**: Built-in commands to initialize and manage analytical engineering pipelines.
+- **AI Service Integration**: Scaffold RAG, agent, agentic (LangGraph) and OCR services for OpenAI, Anthropic, Mistral, Gemini and Azure OpenAI, with dependencies and settings wired in.
+- **dbt projects**: DuckDB, Postgres, Snowflake, BigQuery or Databricks; 3 architectures; example seeds, models, tests and snapshot that `dbt build` out of the box.
+- **Databricks projects**: Asset Bundle with dev/prod targets, Unity Catalog schema, a daily job (Python wheel, notebook, Lakeflow/DLT pipeline, dbt), serverless or classic compute, local tests with Databricks Connect.
 - **Data Sync**: Generate ELT scripts to sync NoSQL databases (like MongoDB) to relational databases (like PostgreSQL).
 - **Production-Ready**: Includes pre-configured JWT middleware, rate limiting (slowapi), background scheduling (apscheduler), and WebSockets.
 
@@ -26,9 +29,27 @@ uv tool install fast-stack-forge
 
 ## 🛠️ Usage
 
+### 0. Quick start: the wizard
+
+```bash
+fast-stack-forge new
+```
+
+```text
+What do you want to create?
+  [1] fastapi  FastAPI backend (entities, JWT, rate limiting, scheduler)
+  [2] dbt  dbt project (DuckDB, Postgres, Snowflake, BigQuery, Databricks)
+  [3] databricks  Databricks Asset Bundle (jobs, notebooks, pipelines, dbt)
+  [4] ds  Data science project (notebooks, Streamlit, optional FastAPI)
+Choice [1]:
+```
+
+Every `init*` command works the same way: options you don't pass on the command line are asked interactively.
+Add `-y` / `--yes` to skip the questions and use the defaults.
+
 ### 1. Initialize a Project
 
-To bootstrap a new project, use the `init` command. You can specify your preferred database engine (`sqlite`, `postgresql`, `mysql`, or `mongodb`).
+To bootstrap a new project, use the `init` command. You can specify your preferred database engine (`sqlite`, `postgresql`, `mysql`, or `mongodb`), or leave it out to be asked.
 
 ```bash
 fast-stack-forge init my_project --db mongodb
@@ -64,44 +85,88 @@ fast-stack-forge make:entity User name:string age:int email:string:hash is_activ
 - **Types:** `string`, `int`, `float`, `bool`, `text`, `date`, `datetime`
 - **Modifiers:** `encrypt`, `hash`, `nullable`, `fk=ModelName`
 
-### 4. FastForge ETL (dbt Integration)
-
-FastForge now includes native scaffolding for analytical engineering via **dbt**! 
-
-To initialize a complete dbt project package inside your `src/` directory:
+### 4. dbt projects
 
 ```bash
-fast-stack-forge init:etl my_dbt_project --archi medallion --connector local
+fast-stack-forge init:dbt                      # asks: name, architecture, adapter, examples, Python version
+fast-stack-forge init:dbt analytics --archi medallion --adapter duckdb -y
+cd analytics && make install && make build
 ```
-- **`--archi`**: Choose `default` (stg, int, mart), `medallion` (bronze, silver, gold), or `star` (raw, dim, fact).
-- **`--connector`**: Choose `local` (DuckDB), `snowflake`, `bigquery`, or `postgres`.
 
-To quickly scaffold a dbt model inside your project without boilerplate:
+- **`--archi`**: `default` (staging → intermediate → marts), `medallion` (bronze → silver → gold) or `star` (staging → dim → fact).
+- **`--adapter`**: `duckdb` (local, zero setup), `postgres`, `snowflake`, `bigquery` or `databricks`.
+- **`--examples/--no-examples`**: example seeds, models, tests (incl. `dbt_utils`), a snapshot and an exposure.
+- **`--python-model`**: a dbt Python model example (DuckDB, Snowflake, Databricks).
+
+The project comes with a `pyproject.toml` (uv), a `Makefile` (`make help`), a `profiles.yml` that reads its secrets from environment variables, and a `.env.example`.
+Run inside an existing FastForge project, the dbt project goes into `src/<name>/` and its dependencies are merged into the root `pyproject.toml`.
+(`init:etl` still works as an alias.)
+
+Add a model from anywhere inside the project:
 
 ```bash
-fast-stack-forge make:dbt fact_user --view --incremental --layer silver
+fast-stack-forge make:dbt fct_user --layer gold --incremental
+fast-stack-forge make:dbt py_scores --layer gold --python
 ```
-- **`--view`**: Sets materialization to `view`.
-- **`--incremental`**: Configures incremental logic automatically.
+
+### 4b. Databricks projects
+
+```bash
+fast-stack-forge init:databricks               # asks: name, workspace URL, catalog, compute, runtime, components
+fast-stack-forge init:databricks lakehouse --host https://adb-123.azuredatabricks.net \
+    --compute serverless --runtime 17.3 --with wheel --with pipeline --with dbt -y
+```
+
+Generates a [Databricks Asset Bundle](https://docs.databricks.com/dev-tools/bundles/):
+
+```text
+lakehouse/
+├── databricks.yml              <-- dev (default) and prod targets, catalog/schema variables
+├── resources/
+│   ├── schema.yml              <-- Unity Catalog schema
+│   ├── lakehouse_pipeline.yml  <-- Lakeflow Declarative Pipeline (--with pipeline)
+│   └── lakehouse_job.yml       <-- daily job: ingest → refresh_pipeline → transform → dbt
+├── src/
+│   ├── notebooks/ingest.py     <-- (--with notebook)
+│   ├── pipelines/              <-- bronze/silver/gold DLT tables
+│   └── lakehouse/main.py       <-- Python package built as a wheel (--with wheel)
+├── dbt_project/                <-- dbt-databricks project (--with dbt)
+├── tests/                      <-- pytest through Databricks Connect
+├── pyproject.toml  Makefile  .env.example
+```
+
+- **`--compute`**: `serverless` (no cluster to manage) or `classic` (job cluster, with `--cloud aws|azure|gcp`).
+- **`--runtime`**: `17.3`, `16.4` or `15.4` LTS. Sets the local Python and Databricks Connect versions.
+- **`--with`**: `wheel`, `notebook`, `pipeline`, `dbt` (repeatable).
+
+```bash
+cd lakehouse
+make login     # databricks auth login
+make install   # uv sync
+make deploy    # databricks bundle deploy -t dev
+make run       # databricks bundle run lakehouse_job
+```
 
 ### 5. Generate AI Services
 
-FastForge includes a powerful `make:service` command that instantly scaffolds production-ready AI services (RAG, Agents, OCR) connected directly to your FastAPI routes.
+`make:service` scaffolds an AI service and its JWT-protected router, adds the dependencies to `pyproject.toml` and the settings to `.env`. Run it without options to answer the questions.
 
 ```bash
-fast-stack-forge make:service DocumentOCR --type ocr --provider azure
+fast-stack-forge make:service HelpdeskBot --type rag --provider anthropic --vector-store qdrant
+uv sync            # install the new dependencies, then fill in the API keys in .env
 ```
 
-**Options:**
-- **`--type`**: Choose `rag` (Retrieval-Augmented Generation), `agent` (Tool-calling Agent), `agentic` (Workflow State Graph), or `ocr` (Vision Extraction).
-- **`--provider`**: Choose `openai`, `anthropic`, `mistral`, `gemini`, or `azure`.
-- **`--vector-store`**: (For `rag` type only). Choose `chroma` (Local), `qdrant` (Cloud/Docker), or `supabase` (PostgreSQL/pgvector). Defaults to `chroma`.
+| `--type` | What you get | Endpoints |
+|---|---|---|
+| `rag` | Answers from your documents: chunking, vector search, sources in the answer | `POST /<name>` `{"query"}`, `POST /<name>/ingest` (list of `{"id", "text", "metadata"}`), `POST /<name>/refresh` (SQL projects: indexes `<NAME>_SOURCE_QUERY`) |
+| `agent` | Tool-calling agent (LangChain `create_agent`) with per-session memory | `POST /<name>` `{"query", "session_id"}` |
+| `agentic` | Explicit LangGraph workflow (LLM ↔ tools loop) to extend with your own nodes | `POST /<name>` `{"query", "session_id"}` |
+| `ocr` | Text extraction from an uploaded image or PDF, returned as Markdown | `POST /<name>` (multipart, field `file`) |
 
-**Example: Building a fully-functional RAG service with Qdrant and OpenAI**
-```bash
-fast-stack-forge make:service HelpdeskBot --type rag --provider openai --vector-store qdrant
-```
-This generates the `HelpdeskBotService` integrated with `langchain-openai`, `langchain-qdrant`, and automatically exposes a `POST /helpdeskbot` endpoint with JWT authentication in your FastAPI app!
+- **`--provider`**: `openai`, `anthropic`, `mistral`, `gemini` or `azure` (Azure OpenAI deployments). Models are set in `.env` (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, ... ) with current defaults, so you can change them without touching the code.
+- **`--vector-store`** (RAG only): `chroma` (local folder), `qdrant` (collection created automatically), `supabase` (Postgres + pgvector) or `upstash`.
+- Anthropic has no embeddings API: Anthropic RAG services use [Voyage AI](https://www.voyageai.com/) embeddings (`VOYAGE_API_KEY`).
+- Agent memory is in-process (`InMemorySaver`): use a persistent LangGraph checkpointer when you run several workers.
 
 ### 6. Generate Data Sync Scripts (ELT)
 

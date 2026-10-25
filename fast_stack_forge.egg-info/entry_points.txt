@@ -1,2 +1,0 @@
-[console_scripts]
-fast-stack-forge = fast_stack_forge.cli:main

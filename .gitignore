@@ -1,1 +1,17 @@
-projects
+# Python / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Projects generated while trying the CLI
+projects/
